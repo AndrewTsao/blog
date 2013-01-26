@@ -1,11 +1,21 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <urlset xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'>
     <url>
+        <loc>http://andrewtsao.github.com/blog&apos;/blog/2012/08/19/zero-page/</loc>
+        <lastmod>2013-01-26T18:01:55+08:00</lastmod>
+    </url>
+    <url>
+        <loc>
+            http://andrewtsao.github.com/blog&apos;/blog/2013/01/26/notes-for-dart-runtime-reading/
+        </loc>
+        <lastmod>2013-01-26T21:16:14+08:00</lastmod>
+    </url>
+    <url>
         <loc>http://andrewtsao.github.com/blog&apos;/</loc>
-        <lastmod>2012-08-19T01:19:40+08:00</lastmod>
+        <lastmod>2013-01-26T21:16:14+08:00</lastmod>
     </url>
     <url>
         <loc>http://andrewtsao.github.com/blog&apos;/blog/archives/</loc>
-        <lastmod>2012-08-19T01:19:40+08:00</lastmod>
+        <lastmod>2013-01-26T21:16:14+08:00</lastmod>
     </url>
 </urlset>

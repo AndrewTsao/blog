@@ -4,7 +4,7 @@
   <title><![CDATA[(0, 1)]]></title>
   <link href="http://andrewtsao.github.com/blog'/atom.xml" rel="self"/>
   <link href="http://andrewtsao.github.com/blog'/"/>
-  <updated>2012-08-19T10:40:56+08:00</updated>
+  <updated>2013-01-26T21:17:09+08:00</updated>
   <id>http://andrewtsao.github.com/blog&#8217;/</id>
   <author>
     <name><![CDATA[andi]]></name>
@@ -12,5 +12,222 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Notes for Dart Runtime Reading]]></title>
+    <link href="http://andrewtsao.github.com/blog'/blog/2013/01/26/notes-for-dart-runtime-reading/"/>
+    <updated>2013-01-26T20:59:00+08:00</updated>
+    <id>http://andrewtsao.github.com/blog&#8217;/blog/2013/01/26/notes-for-dart-runtime-reading</id>
+    <content type="html"><![CDATA[<p>Dart运行时代码阅读笔记</p>
+
+<p>粗浅地阅读Dart 的Runtime或者叫虚拟机的源代码，将一些浅薄的理解记录下来，纯粹是为了缓解蛋疼。如果理解得不对，或者有更好理解或表达方式请不吝指点。都是程序猿，不是？</p>
+
+<h1>Dart</h1>
+
+<p>Dart 是由Google公司发布的程序语言，大概是想取代javascript语言，成为Web开发体系的霸主。不管其商业目的，试图完成一个目标，并让许多程序员有更多的选择，就是好的。它的作者是大名顶顶的Las Bak所领衔的团队——也是V8的开发者。</p>
+
+<p>Dart语言是一种介于强类型语言和动态语言之间的所谓类型可选的语言。它的类型是可选择的，可有可无。虚拟机在生产模式运行时也并未指望程序员们所定义的类型信息能够提供什么帮助，而是像动态语言一样来执行。那要类型信息做什么呢？——开发过程用来１给人看，２开发工具使用。一般的脚本语言，没有类型信息，接口靠注释描述，IDE也只能领先这些注释来提示，高级一些的能够做一些适当的类型推断，给点提示。应付一些小的工程还好，可是web一下子发展成这样，当初的javascript也没想过会有一天，大家都使用这个来编程，早以超出了当初仅仅用来验证表单、操作图片写点动态效果的应用场景了。Dart正是希望能够带来更大规则的web开发工程体系。使用可选择的类型语言提供接口定义和开发工具类型检测、代码重构、代码组织等规模化的开发需求。</p>
+
+<p>为什么会叫Dart呢？飞标，看过Dart的布道士说过好像其意义就是快速。</p>
+
+<p>有许多人觉得既然在实际生产模式运行时仍然是按动态语言的方式执行，那怎么会快呢。我的个人理解是有了类型约束之后，能够编写出JIT友好的代码。JIT的类型推断然后会根据热点生成高度优化的代码，而在推断失败时所发生的事情有一种称法叫&#8221;speculation failure&#8221;，也表明其代价非常高。而当在编码时做了类型约束的话，将使这一类失败降得非常低，性能也就提高了。</p>
+
+<h1>RawObject</h1>
+
+<p>RawObject 应该可以说成是Dart Object的C++描述。这是DartVM中所有对象的内存表示的公共部分。包括两个部分，被tag的this指针和包含对象基本信息的uword tags_.</p>
+
+<h1>被Tag的this指针</h1>
+
+<p>现代的机器字肯定不会是一字节，而是32位4字节，64位8字节，如果在分配内存时，按机器字来对齐的话，那么分配的地址肯定是能被４或８整除的，当所有地址都应该是这样——第１bit或者第１，２bit，注定是０，也就没有意义。如果不拿来记录其它信息，那就是一种浪费——浪费是可耻的。</p>
+
+<p>而dart虚拟机要求所有的dart对象都应该是按双字对齐的。因此所有对象的地址(this指针)末尾都应该有２／３bit为０。这几个位都被用来做什么呢。首先判断一个this是不是指针。如果最后一位是０的话，表示这不是一个有效指针，而是一个小整数smi（３２位机器就是３１位的整数，６４位机器就是６３位整数了）。否则，这就是一个从堆上分配的dart对象。</p>
+
+<p>另外还有２个bit用来做什么呢？拿来区分对象的空间属性，dart采用了分代垃圾收集算法，因此对象就有可能出现在新堆或者是旧堆。因此，就使用第２个bit来记录这个信息，如果是１的话表示是新堆上的对象（NewObject），否则就是(OldObject）。于是，当this&amp;WordSize==WordSize则为NewObject，否则为OldObject。</p>
+
+<pre><code>IsHeapObject  ((uword)this &amp; kSmiTagMask) == kHeapObjectTag
+IsNewObject   ((uword)this &amp; kNewObjectAlignmentOffset) == kNewObjectAlignmentOffset
+IsOldObject     ((uword)this &amp; kNewObjectAlignmentOffset) == kOldObjectAlignmentOffset
+</code></pre>
+
+<p>被tag的this就不指向正确的C++ Object了。你不可以像Ｃ＋＋对样解引用this指针。如果是小整数，那么this的值右移１位就还原为具体的值了。否则它是一个堆对象，但仍不能直接像this一样使用，而需要通过ptr()函数，reinterpret_cast&lt;RawObject*>((uword)this-1)成正确的C++ Object。因此代码中也就看到所有对象的属性操作都是ptr()->name_, ptr()->tags。</p>
+
+<p>这些被tag的this正是RawObject，正是Dart VM的Object—— 正是Dart Object。</p>
+
+<p>当然要想Tag this指针，那么你就不可以再使用new来构造对象，因为这是C++对象的构造方式。所以RawObject定义是使用</p>
+
+<pre><code>DISALLOW_ALLOCATION();
+DISALLOW_IMPLICIT_CONSTRUCTORS(RawObject);
+</code></pre>
+
+<p>宏来禁用了RawObject及其继承者的生命周期管理函数，堆构造和栈构造函数。</p>
+
+<p>Dart Object的生命周期得由Dart 的运行时——Dart VM来管理，而不是由C++的运行时管理。</p>
+
+<h1>uword tags_</h1>
+
+<p>每一个this都是一个Dart Object存在的标志。既然存在了，就得有意义。</p>
+
+<p>uword tags<em>　存储着Dart Object最基本的信息。uword  tags</em> 具体包括这些位域：</p>
+
+<p>  0 FreeBit
+  1 MarkBit
+  2 CanonicalBit
+  3 FromSnapshotBit
+  4 WatchedBit
+  5-7 ReservedBit
+  8-15 SizeTagBit
+  16-31 ClassIdTagBit</p>
+
+<p>这个字的信息还真不少，但它仅描述了一个Dart Object最基本的信息。</p>
+
+<h1>对象的生死</h1>
+
+<p>(TODO(swcao):了解垃圾回收的过程)</p>
+
+<p>要谈对象，首先得活着，对吧？活着才有意义。为了管理所有的对象，跟踪其状态，因此每个Dart Object都需要记录一些相关的这些信息。</p>
+
+<p>0 FreeBit　标记为空闲状态，其意义表示这个对象已经被回收，但是它所占据的VM的内存资源还在这里，等着后续新生命诞生时使用。当垃圾回收器检查到一个对象已经不可能再有存在的意义的时候，它会将之归入到FreeList中，并被打上了Free标记。</p>
+
+<p>1 MarkBit Dart使用的是Mark-Sweep的垃圾回收策略，该位标志用于在回收过程中标记对象的。</p>
+
+<p>2 CanonicalBit
+3 FromSnapshotBit
+这两个对象都是在Snapshot中使用的，Snapshot是Dart主打的一个特性，即可以对Dart的运行时状态创建快照，从而可以快速地从快照中恢复出来，提供应用程序的快速启动速度。</p>
+
+<p>4 WatchedBit
+这个标志也未理解清楚。</p>
+
+<p>与这些属性信息配套的，还有一个VisitorPointers接口，</p>
+
+<pre><code>intptr_t VisitPointers(ObjectPointerVisitor* visitor)
+</code></pre>
+
+<p>用于支持对dart对象及其引用结点进行遍历，比如GC在进行标记操作时，需要从根对象开始遍历每一个对象。</p>
+
+<h1>对象的尺寸信息</h1>
+
+<p>对我们而言，对象是极其抽象的、无形的。但是这些抽象的东西要想在计算机中表示出来，就需要占用内存空间（正象一个农民，得有自己的一块土地，码农好像都没有吧）。因此，最基本的信息就是对象的尺寸信息。</p>
+
+<p>   8-15　SizeTagBit 描述对象的尺寸：８位域描述。</p>
+
+<p>编码方式是，对象的实际尺寸&gt;&gt;kObjectAlignmentLog2（这个值是根据机器决定的，总是机器的双字的字节数，如果是３２位，双字就是８字节。６４位机器则为１６字节。这个信息就没有意义了。因此，编码时可以消除。当解码时，再乘以8或者１６就OK了。因此，SizeTag能够被编码的尺寸最大为 2<em>wordsize</em>((1&lt;&lt;8)-1)。对于那些非常大的对象，８－１５位域编码不下，这些位都填上０，当想从SizeTagBit上查看对象的尺寸时，发现解码出来的对象尺寸是０，这显示不正确了。这时就得从各类对象自己特有的尺寸域中查询出对象的尺寸来，比如对于数组对象，那肯定它还需要再根据元素的长度来计算一下它实际的所占用的尺寸，这一切都在RawObject::SizeFromClass()中进行了描述。</p>
+
+<h1>对象的类型信息</h1>
+
+<p>有了尺寸信息，对象们也就拥有了它的形体，下一步自然是获得一个身份。因此就必要一个基本的类型信息。</p>
+
+<p>  16-31 ClassIdTagBit</p>
+
+<p>ClassIdTag用来给出的Dart Object的类型信息。这１６位域记录Dart Object 的ClassId，标明该对象是哪一个类型的实例，包括语言预定义的类型或称为vm class，或predefined class，以及用户使用class来定义的类型。在raw_object.h的开篇就以一种层级的方式列表了近百来个预定义的类型，包括Ｃlass、String、Number、Array等，而Number下面还分为Integert和Double，Integer下面又有Smi, Mint, Bigint. 虚拟机给我们提供的所有可以定义的对象都是在raw_object.h之中定义的，在这一层次，所有对象的行为只不过不是使用dart语言描述的，而是使用C++语言描述的。但是，它们依然是遵从Dart Object的对象布局和属性访问方式的。唯一的区别应该是这些不是由dart 编译器生成，而是由VM guys手工编写的。而我们使用dart语言定义出的对象，最终将由编译器来解释并构造出来，并被注册到class_table中。（使用 dart &#8211;print_class_table 可以打印出所有由脚本定义的类型。）</p>
+
+<p>  为了区分vm class和用户定义的类型，当class id小于kNumPredefinedCids的时候，表示是vm class，否则为用户定义的类型。预定义的class id中，还有一些奇怪的类型.</p>
+
+<p>  kIllegalCid，非法的class id,</p>
+
+<p>  kNullCid,
+  kDynamicCid,
+  kVoidCid,
+  分别表示预分配的实例，Null, dynamic, Void.</p>
+
+<p>  // The following entry does not describe a real class, but instead it is an
+  // id which is used to identify free list elements in the heap.
+  kFreeListElement
+  这个并不是一个真实的类别，而是用于标记heap里面可再分配的空闲元素。</p>
+
+<p>  对于每一个Dart Object，我们都可以从这个class id得到该对象的类型信息，具有哪些属性、哪些方法等等。</p>
+
+<p>总结一下，RawObject描述了所有DartObject的基本方法和属性。所有的Dart Object，也都是从RawObject派生出来的。</p>
+
+<h1>RawObject的编程代理</h1>
+
+<p>RawObject本质上是Dart Object在虚拟机中的内存描述，它们是被虚拟机操作的数据，我觉得对于Dart JIT来讲，有了这些就已经足够了。但是开发人员还需要为编写虚拟机的运行时系统(Runtime)，他们需要有一套可以编程的接口，以面向对象的方式来构造、操作和访问这些数据——或者说是我们应该看到的对象的样子。因此，Dart VM代码中还有一套与RawObject体系对应的C++ 类体系——Object，在object.h中定义。</p>
+
+<p>  Object 体系是RawObject的包装器，它们禁止被公有构造。需要通过Handle构造器创建。
+  Object 体系中，每个对象除了保存raw_ 到对应的RawObject之外，一般没有其它的数据成员。
+  Object上的方法是为了方便的在C++中操作RawObject的实例。</p>
+
+<p>  还有一个不太理解的cpp_vtable，这个东西是为了JIT么？</p>
+
+<p>Handles 确保在VM中安全的访问Dart对象，因为Dart对象是生命周期是由GC决定的。</p>
+
+<p>Handles分为ZoneHandle和ScopeHandle</p>
+
+<h1>Dart VM的内存分配</h1>
+
+<h1>Zone</h1>
+
+<p>Zone 解决小块内存(chunk)的快速分配，小块内存不会单独释放，而是连同一个Zoneｇ一次性释放掉。</p>
+
+<p>Zone 本身也不会自动释放，也是类似FreeList的方式，将空闲的Zone链接起来</p>
+
+<p>Zone 内部又包含许多的Segment链接起来的。默认的chunk的大小为1KB</p>
+
+<p>Zone对象自身也包含了１ＫＢ的可分配缓冲区。</p>
+
+<p>Zone可分配空闲空间通过两个指针position_和limit_来记录，position_表示当前空闲空间的起始位置，limit_为结束位置，Zone构造时就将position_ limit_指向了自身所包含的1KB的可分缓冲区上了，这样，对于某些临时的小内存使用，根本就不需要进行malloc/free操作，而直接使用StackResource了。</p>
+
+<p>如果当前请求的内存块能够从这个区间内分配，则分配，并将position_的指针向后挪。</p>
+
+<p>如果不够分配的话，首先会判断是不是超大的内存请求，大于一个Segment的大小，就使用LargeSegment的策略进行分配。并链接到largeSegment链中。</p>
+
+<p>于是一般的segment能够满足请求，就分配一个新的segment，并从头划出一块内存返回给请求方，并更新
+position_和limit_指针。而以前那一小块内存也就浪费不用了。</p>
+
+<p>一个完整的Segment（Segment头和可分配内存）默认为64KB，实际分配时，除去Segment自身信息的大小sizeof(Segment)，是不足64KB的。要是请求分配的内存大于这个值，就使用LargeSegment分配策略了。</p>
+
+<p>另外，Zone还提供了两个便捷方法，一个是用于格式化字符串生成，另一个是字段串拷贝的。这两个通常都是短命小内存块的常客。</p>
+
+<p>StackZone 是在域内存活的Zone，在出作用域时将所占用内存全部释放。StackZone和StackZone会沿着调用的深入而形成StackZone链。类似于调用帧。</p>
+
+<p>不管是怎么分配，分配的尺寸当然首先要Round一下，不是按字对齐，就是按页对齐了。</p>
+
+<p>这种管理内存的方式也正是<a href="http://en.wikipedia.org/wiki/Region-based_memory_management">Region-based memory management</a></p>
+
+<h1>FreeList</h1>
+
+<p>FreeList　用于记录当前空闲的内存结点，并且按内存块的尺寸进行链接，相同尺寸的内存结点连接在一起。这样，FreeList　中其实有１２８+1根链表，依次大小也就是８字节的倍数。8,16,24,32,40,48,56,64,8*128，而这最后一根专门用来记录尺寸大于８＊１２８的内存结点，各种尺寸都有的。因此要分配这种尺寸的结点时，就得在这根链表上扫一遍，配个合适的——并不是说尺寸恰好，而是尺寸能够满足请求尺寸。并不是直接将这个结点返回，而是在返回之前把额外的内存切下来，再挂回到对应的内存链上。就是如果多出８字节，就把这剩下的８字节挂到０链接上，要是还是比８*１２８大的话，那就把剩余部分挂在这个１２８根链上。</p>
+
+<p>FreeListElement　描述FreeList中的一个可用结点。最小的FreeListElement占两个字（３２位上，Word = 32bit，６４位机器就是64bit了）的空间。第一个字用来记录尺寸tags_，第二个字用来跟踪链接下一结点next_.这个FreeListElement也依照RawObject的结构来布局的，对于小尺寸直接编码到tags_上面，如果tags_记录不下
+这个尺寸，那么尺寸信息就记录到next_之后的字上面。</p>
+
+<p>FreeList 还有一个１２８位的BitSet，用来记录对应尺寸的链上是否有空余结点。</p>
+
+<p>在请求尺寸的内存结点时，当前在体系内部，首先会保证请求的尺寸是对齐过的。根据尺寸快速map到对应的链表下标index，然后在bitset里面快速检查是否有空余结点，有的话，从链上出队空闲结点。否则，就在index+1的链上，看是否有空闲结点，拿出来，一劈为二，一半返回给请求方，把剩下的部分挂到链上。</p>
+
+<p>如果所有链上都没有可用的内存结点，这任务就转交给使用方来处理了，在dart里面，会由PageSpace来处理。
+它的处理方式是，分配一块新的页，将整个页丢给FreeList使用。这样，再从FreeList中分配的话，FreeList就会依照它的方式来使用这一页的内存，劈开，分配，劈开&#8230;，也就肯定可以分配到东西了。</p>
+
+<p>这其实也就是<a href="http://en.wikipedia.org/wiki/Buddy_memory_allocation">Buddy memory allocation</a>，对吧?</p>
+
+<h1>Heap</h1>
+
+<p>堆用来管理内存资源，分配Dart Object所需要的内存，对不需要的内存进行回收。</p>
+
+<p>首先，堆是以页HeapPage的方式对内存进行组织的。因为Dart运行时使用的是分代垃圾回收的策略，因此将页划分为两个页空间，New——新生代对象生存空间和Old——年长对象生存空间。虽然Heap只有两个空间，但是对外提供的接口Heap::Allocate(Space, size_t)，却是提供了三个空间，Ｎew,Old和Code。即使显式地在New空间上分配尺寸大于256KB的大家伙，也不会从New空间分配的，而是从Old空间分配。当从Code空间分配时，也总是在Old上分配。可以理解为长命的对象总是在Old堆上分配，短命的对象都是从New空间里分配。而且在回收过程，新生代对象也会被转移到年长代空间中（Promote）。</p>
+
+<p>这个Code空间是用来分配代码页的，即分配的内存必须具备可执行权限，用于存放JIT编译生成的机器指令。这项功能也是JIT编译器所必须的，比如一些安全性较高的操作系统就拒绝程序分配代码页的请求，从而使得安全机制只需要对程序进行静态检查。这也是为什么JIT通常都不可以在安全性较高的移动设备上运行的缘故。</p>
+
+<p>由于两个空间的分配方式和行为差异很大，因此各自</p>
+
+<p>新生代空间</p>
+
+<p>HeapPage 虚拟机堆页</p>
+
+<p>[HEAPPAGE(memory, next<em>, used, top</em>)|First Object&#8230;&#8230;]</p>
+
+<h1>GC</h1>
+
+<p>GC stop - copy  mark - sweep 分代垃圾回收</p>
+]]></content>
+  </entry>
+  
+  <entry>
+    <title type="html"><![CDATA[Zero Page]]></title>
+    <link href="http://andrewtsao.github.com/blog'/blog/2012/08/19/zero-page/"/>
+    <updated>2012-08-19T10:46:00+08:00</updated>
+    <id>http://andrewtsao.github.com/blog&#8217;/blog/2012/08/19/zero-page</id>
+    <content type="html"><![CDATA[
+]]></content>
+  </entry>
   
 </feed>
