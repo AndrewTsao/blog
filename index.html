@@ -9,7 +9,7 @@
   <meta name="author" content="andi">
 
   
-  <meta name="description" content="Dart运行时代码阅读笔记 粗浅地阅读Dart 的Runtime或者叫虚拟机的源代码，将一些浅薄的理解记录下来，纯粹是为了缓解蛋疼。如果理解得不对，或者有更好理解或表达方式请不吝指点。都是程序猿，不是？ Dart Dart 是由Google公司发布的程序语言，大概是想取代javascript语言， &hellip;">
+  <meta name="description" content="Dart运行时代码阅读笔记 粗浅地阅读Dart的Runtime或者叫虚拟机的源代码，将一些浅薄的理解记录下来，纯粹是为了缓解蛋疼。如果理解得不对，或者有更好理解或表达方式请不吝指点。都是程序猿，不是？ Dart Dart 是由Google公司发布的程序语言，大概是想取代javascript语言， &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -95,7 +95,7 @@
 
   <div class="entry-content"><p>Dart运行时代码阅读笔记</p>
 
-<p>粗浅地阅读Dart 的Runtime或者叫虚拟机的源代码，将一些浅薄的理解记录下来，纯粹是为了缓解蛋疼。如果理解得不对，或者有更好理解或表达方式请不吝指点。都是程序猿，不是？</p>
+<p>粗浅地阅读<a href="http://dartlang.org">Dart</a>的Runtime或者叫虚拟机的<a href="dart.googlecode.com">源代码</a>，将一些浅薄的理解记录下来，纯粹是为了缓解蛋疼。如果理解得不对，或者有更好理解或表达方式请不吝指点。都是程序猿，不是？</p>
 
 <h1>Dart</h1>
 
@@ -109,32 +109,36 @@
 
 <h1>RawObject</h1>
 
-<p>RawObject 应该可以说成是Dart Object的C++描述。这是DartVM中所有对象的内存表示的公共部分。包括两个部分，被tag的this指针和包含对象基本信息的uword tags_.</p>
+<p><code>RawObject</code> 应该可以说成是Dart Object的C++描述。这是DartVM中所有对象的内存表示的公共部分。包括两个部分，被tag的this指针和包含对象基本信息的<code>uword tags_</code>.</p>
 
-<h1>被Tag的this指针</h1>
+<h1>被Tag的<code>this</code>指针</h1>
 
 <p>现代的机器字肯定不会是一字节，而是32位4字节，64位8字节，如果在分配内存时，按机器字来对齐的话，那么分配的地址肯定是能被４或８整除的，当所有地址都应该是这样——第１bit或者第１，２bit，注定是０，也就没有意义。如果不拿来记录其它信息，那就是一种浪费——浪费是可耻的。</p>
 
 <p>而dart虚拟机要求所有的dart对象都应该是按双字对齐的。因此所有对象的地址(this指针)末尾都应该有２／３bit为０。这几个位都被用来做什么呢。首先判断一个this是不是指针。如果最后一位是０的话，表示这不是一个有效指针，而是一个小整数smi（３２位机器就是３１位的整数，６４位机器就是６３位整数了）。否则，这就是一个从堆上分配的dart对象。</p>
 
-<p>另外还有２个bit用来做什么呢？拿来区分对象的空间属性，dart采用了分代垃圾收集算法，因此对象就有可能出现在新堆或者是旧堆。因此，就使用第２个bit来记录这个信息，如果是１的话表示是新堆上的对象（NewObject），否则就是(OldObject）。于是，当this&amp;WordSize==WordSize则为NewObject，否则为OldObject。</p>
+<p>另外还有２个bit用来做什么呢？拿来区分对象的空间属性，dart采用了分代垃圾收集算法，因此对象就有可能出现在新堆或者是旧堆。因此，就使用第２个bit来记录这个信息，如果是１的话表示是新堆上的对象（NewObject），否则就是(OldObject）。于是，当<code>this&amp;WordSize==WordSize</code>则为<code>NewObject</code>，否则为<code>OldObject</code>。</p>
 
-<pre><code>IsHeapObject  ((uword)this &amp; kSmiTagMask) == kHeapObjectTag
+<pre><code>``c++
+IsHeapObject  ((uword)this &amp; kSmiTagMask) == kHeapObjectTag
 IsNewObject   ((uword)this &amp; kNewObjectAlignmentOffset) == kNewObjectAlignmentOffset
 IsOldObject     ((uword)this &amp; kNewObjectAlignmentOffset) == kOldObjectAlignmentOffset
+``
 </code></pre>
 
-<p>被tag的this就不指向正确的C++ Object了。你不可以像Ｃ＋＋对样解引用this指针。如果是小整数，那么this的值右移１位就还原为具体的值了。否则它是一个堆对象，但仍不能直接像this一样使用，而需要通过ptr()函数，reinterpret_cast&lt;RawObject*>((uword)this-1)成正确的C++ Object。因此代码中也就看到所有对象的属性操作都是ptr()->name_, ptr()->tags。</p>
+<p>被tag的this就不指向正确的C++ Object了。你不可以像Ｃ＋＋对样解引用this指针。如果是小整数，那么this的值右移１位就还原为具体的值了。否则它是一个堆对象，但仍不能直接像this一样使用，而需要通过ptr()函数，<code>reinterpret_cast&lt;RawObject*&gt;((uword)this-1)</code>成正确的C++ Object。因此代码中也就看到所有对象的属性操作都是<code>ptr()-&gt;name_</code>, <code>ptr()-&gt;tags</code>。</p>
 
 <p>这些被tag的this正是RawObject，正是Dart VM的Object—— 正是Dart Object。</p>
 
-<p>当然要想Tag this指针，那么你就不可以再使用new来构造对象，因为这是C++对象的构造方式。所以RawObject定义是使用</p>
+<p>当然要想Tag this指针，那么你就不可以再使用new来构造对象，因为这是C++对象的构造方式。所以RawObject定义是使用
+&#8220;</p>
 
 <pre><code>DISALLOW_ALLOCATION();
 DISALLOW_IMPLICIT_CONSTRUCTORS(RawObject);
 </code></pre>
 
-<p>宏来禁用了RawObject及其继承者的生命周期管理函数，堆构造和栈构造函数。</p>
+<p>&#8220;
+宏来禁用了RawObject及其继承者的生命周期管理函数，堆构造和栈构造函数。</p>
 
 <p>Dart Object的生命周期得由Dart 的运行时——Dart VM来管理，而不是由C++的运行时管理。</p>
 
@@ -142,18 +146,18 @@ DISALLOW_IMPLICIT_CONSTRUCTORS(RawObject);
 
 <p>每一个this都是一个Dart Object存在的标志。既然存在了，就得有意义。</p>
 
-<p>uword tags<em>　存储着Dart Object最基本的信息。uword  tags</em> 具体包括这些位域：</p>
-
-<p>  0 FreeBit
+<p><code>uword tags_</code>　存储着Dart Object最基本的信息。uword  tags_ 具体包括这些位域：
+<code>  
+  0 FreeBit
   1 MarkBit
   2 CanonicalBit
   3 FromSnapshotBit
   4 WatchedBit
   5-7 ReservedBit
   8-15 SizeTagBit
-  16-31 ClassIdTagBit</p>
-
-<p>这个字的信息还真不少，但它仅描述了一个Dart Object最基本的信息。</p>
+  16-31 ClassIdTagBit
+</code>
+这个字的信息还真不少，但它仅描述了一个Dart Object最基本的信息。</p>
 
 <h1>对象的生死</h1>
 
@@ -161,52 +165,54 @@ DISALLOW_IMPLICIT_CONSTRUCTORS(RawObject);
 
 <p>要谈对象，首先得活着，对吧？活着才有意义。为了管理所有的对象，跟踪其状态，因此每个Dart Object都需要记录一些相关的这些信息。</p>
 
-<p>0 FreeBit　标记为空闲状态，其意义表示这个对象已经被回收，但是它所占据的VM的内存资源还在这里，等着后续新生命诞生时使用。当垃圾回收器检查到一个对象已经不可能再有存在的意义的时候，它会将之归入到FreeList中，并被打上了Free标记。</p>
+<p>  <code>0 FreeBit</code>　标记为空闲状态，其意义表示这个对象已经被回收，但是它所占据的VM的内存资源还在这里，等着后续新生命诞生时使用。当垃圾回收器检查到一个对象已经不可能再有存在的意义的时候，它会将之归入到FreeList中，并被打上了Free标记。</p>
 
-<p>1 MarkBit Dart使用的是Mark-Sweep的垃圾回收策略，该位标志用于在回收过程中标记对象的。</p>
+<p>  <code>1 MarkBit</code> Dart使用的是Mark-Sweep的垃圾回收策略，该位标志用于在回收过程中标记对象的。</p>
 
-<p>2 CanonicalBit
-3 FromSnapshotBit
-这两个对象都是在Snapshot中使用的，Snapshot是Dart主打的一个特性，即可以对Dart的运行时状态创建快照，从而可以快速地从快照中恢复出来，提供应用程序的快速启动速度。</p>
+<p>  <code>2 CanonicalBit</code>
+  <code>3 FromSnapshotBit</code> 这两个对象都是在Snapshot中使用的，Snapshot是Dart主打的一个特性，即可以对Dart的运行时状态创建快照，从而可以快速地从快照中恢复出来，提供应用程序的快速启动速度。</p>
 
-<p>4 WatchedBit
-这个标志也未理解清楚。</p>
+<p>  4 WatchedBit 这个标志也未理解清楚。</p>
 
-<p>与这些属性信息配套的，还有一个VisitorPointers接口，</p>
+<p>与这些属性信息配套的，还有一个VisitorPointers接口，
+&#8220;</p>
 
 <pre><code>intptr_t VisitPointers(ObjectPointerVisitor* visitor)
 </code></pre>
 
-<p>用于支持对dart对象及其引用结点进行遍历，比如GC在进行标记操作时，需要从根对象开始遍历每一个对象。</p>
+<p>&#8220;
+用于支持对dart对象及其引用结点进行遍历，比如GC在进行标记操作时，需要从根对象开始遍历每一个对象。</p>
 
 <h1>对象的尺寸信息</h1>
 
 <p>对我们而言，对象是极其抽象的、无形的。但是这些抽象的东西要想在计算机中表示出来，就需要占用内存空间（正象一个农民，得有自己的一块土地，码农好像都没有吧）。因此，最基本的信息就是对象的尺寸信息。</p>
 
-<p>   8-15　SizeTagBit 描述对象的尺寸：８位域描述。</p>
+<p>   <code>8-15　SizeTagBit</code> 描述对象的尺寸：８位域描述。</p>
 
-<p>编码方式是，对象的实际尺寸&gt;&gt;kObjectAlignmentLog2（这个值是根据机器决定的，总是机器的双字的字节数，如果是３２位，双字就是８字节。６４位机器则为１６字节。这个信息就没有意义了。因此，编码时可以消除。当解码时，再乘以8或者１６就OK了。因此，SizeTag能够被编码的尺寸最大为 2<em>wordsize</em>((1&lt;&lt;8)-1)。对于那些非常大的对象，８－１５位域编码不下，这些位都填上０，当想从SizeTagBit上查看对象的尺寸时，发现解码出来的对象尺寸是０，这显示不正确了。这时就得从各类对象自己特有的尺寸域中查询出对象的尺寸来，比如对于数组对象，那肯定它还需要再根据元素的长度来计算一下它实际的所占用的尺寸，这一切都在RawObject::SizeFromClass()中进行了描述。</p>
+<p>编码方式是，对象的实际尺寸&gt;&gt;<code>kObjectAlignmentLog2</code>（这个值是根据机器决定的，总是机器的双字的字节数，如果是３２位，双字就是８字节。６４位机器则为１６字节。这个信息就没有意义了。因此，编码时可以消除。当解码时，再乘以8或者１６就OK了。因此，SizeTag能够被编码的尺寸最大为 2<em>wordsize</em>((1&lt;&lt;8)-1)。对于那些非常大的对象，８－１５位域编码不下，这些位都填上０，当想从SizeTagBit上查看对象的尺寸时，发现解码出来的对象尺寸是０，这显示不正确了。这时就得从各类对象自己特有的尺寸域中查询出对象的尺寸来，比如对于数组对象，那肯定它还需要再根据元素的长度来计算一下它实际的所占用的尺寸，这一切都在<code>RawObject::SizeFromClass()</code>中进行了描述。</p>
 
 <h1>对象的类型信息</h1>
 
-<p>有了尺寸信息，对象们也就拥有了它的形体，下一步自然是获得一个身份。因此就必要一个基本的类型信息。</p>
-
-<p>  16-31 ClassIdTagBit</p>
-
-<p>ClassIdTag用来给出的Dart Object的类型信息。这１６位域记录Dart Object 的ClassId，标明该对象是哪一个类型的实例，包括语言预定义的类型或称为vm class，或predefined class，以及用户使用class来定义的类型。在raw_object.h的开篇就以一种层级的方式列表了近百来个预定义的类型，包括Ｃlass、String、Number、Array等，而Number下面还分为Integert和Double，Integer下面又有Smi, Mint, Bigint. 虚拟机给我们提供的所有可以定义的对象都是在raw_object.h之中定义的，在这一层次，所有对象的行为只不过不是使用dart语言描述的，而是使用C++语言描述的。但是，它们依然是遵从Dart Object的对象布局和属性访问方式的。唯一的区别应该是这些不是由dart 编译器生成，而是由VM guys手工编写的。而我们使用dart语言定义出的对象，最终将由编译器来解释并构造出来，并被注册到class_table中。（使用 dart &#8211;print_class_table 可以打印出所有由脚本定义的类型。）</p>
+<p>有了尺寸信息，对象们也就拥有了它的形体，下一步自然是获得一个身份。因此就必要一个基本的类型信息。
+<code>  
+  16-31 ClassIdTagBit
+</code><br/>
+ClassIdTag用来给出的Dart Object的类型信息。这１６位域记录Dart Object 的ClassId，标明该对象是哪一个类型的实例，包括语言预定义的类型或称为vm class，或predefined class，以及用户使用class来定义的类型。在raw_object.h的开篇就以一种层级的方式列表了近百来个预定义的类型，包括Ｃlass、String、Number、Array等，而Number下面还分为Integert和Double，Integer下面又有Smi, Mint, Bigint. 虚拟机给我们提供的所有可以定义的对象都是在raw_object.h之中定义的，在这一层次，所有对象的行为只不过不是使用dart语言描述的，而是使用C++语言描述的。但是，它们依然是遵从Dart Object的对象布局和属性访问方式的。唯一的区别应该是这些不是由dart 编译器生成，而是由VM guys手工编写的。而我们使用dart语言定义出的对象，最终将由编译器来解释并构造出来，并被注册到class_table中。（使用 dart &#8211;print_class_table 可以打印出所有由脚本定义的类型。）</p>
 
 <p>  为了区分vm class和用户定义的类型，当class id小于kNumPredefinedCids的时候，表示是vm class，否则为用户定义的类型。预定义的class id中，还有一些奇怪的类型.</p>
 
-<p>  kIllegalCid，非法的class id,</p>
+<p>  <code>kIllegalCid</code>，非法的class id,</p>
 
-<p>  kNullCid,
-  kDynamicCid,
-  kVoidCid,
-  分别表示预分配的实例，Null, dynamic, Void.</p>
+<p>  <code>kNullCid,</code>
+  <code>kDynamicCid,</code>
+  <code>kVoidCid,</code>
+  分别表示预分配的实例，<code>Null</code>, <code>dynamic</code>, <code>Void</code>.</p>
 
-<p>  // The following entry does not describe a real class, but instead it is an
+<p><code>
+  // The following entry does not describe a real class, but instead it is an
   // id which is used to identify free list elements in the heap.
   kFreeListElement
+</code>
   这个并不是一个真实的类别，而是用于标记heap里面可再分配的空闲元素。</p>
 
 <p>  对于每一个Dart Object，我们都可以从这个class id得到该对象的类型信息，具有哪些属性、哪些方法等等。</p>
